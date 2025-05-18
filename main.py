@@ -1,209 +1,39 @@
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
-from io import BytesIO
+from utils import extract_data, generate_graph, create_pdf, get_summary
 import os
-from PIL import Image as PILImage
-import textwrap
 
-# Set a consistent style
-styles = getSampleStyleSheet()
-title_style = styles['h1']
-title_style.alignment = 1  # Center alignment
-heading1_style = styles['h2']
-heading1_style.alignment = 0  # Left alignment
-heading2_style = styles['h3']
-heading2_style.alignment = 0  # Left alignment
-body_style = styles['Normal']
-body_style.alignment = 0
-body_style.leading = 12
+# Apna Gemini / OpenAI API key yahan likho
+GEMINI_API_KEY = "AIzaSyBlPzg--Lz2etU1Mx5KTCvji9hGRGbMaUg"
 
-# Code block style
-code_style = ParagraphStyle('CodeStyle', parent=body_style, fontName='Courier', fontSize=10,
-                            leading=12, textColor='#006400', backColor='#F0F0F0',
-                            borderPadding=6, leftIndent=0, rightIndent=0, wordWrap='LTR')
+st.title("✨ Client Analysis Report Generator")
 
+uploaded_file = st.file_uploader("Upload your analysis text file", type=["txt"])
+if uploaded_file:
+    text = uploaded_file.read().decode("utf-8")
+    data = extract_data(text)
+    if not data:
+        st.error("File format sahi nahi lag raha, data nahi mil raha.")
+    else:
+        st.success("Analysis data parsed!")
 
-def analyze_text(file_path):
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            full_text = file.read()
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        return None, None, None
-
-    lines = full_text.split('\n')
-    title = lines[0].strip() if lines else "Untitled Document"
-    sections = {}
-    current_section = "Introduction"
-    section_content = []
-
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
-            continue
-
-        if line.startswith("## "):
-            if current_section and section_content:
-                sections[current_section] = "\n".join(section_content)
-            current_section = line[3:].strip()
-            section_content = []
-        elif line.startswith("# "):
-            if current_section and section_content:
-                sections[current_section] = "\n".join(section_content)
-            current_section = line[2:].strip()
-            section_content = []
-        else:
-            section_content.append(line)
-
-    if current_section and section_content:
-        sections[current_section] = "\n".join(section_content)
-
-    if not sections:
-        sections["Full Text"] = full_text
-
-    return title, sections, full_text
-
-
-def create_plots(data, filename):
-    plot_files = []
-
-    plt.figure(figsize=(8, 6))
-    try:
-        word_counts = {}
-        text_content = ""
-        for key in data:
-            if key != "Title":
-                text_content += data[key] + " "
-
-        words = text_content.lower().split()
-        for word in words:
-            word_counts[word] = word_counts.get(word, 0) + 1
-        df_word_counts = pd.DataFrame(list(word_counts.items()), columns=['Word', 'Frequency'])
-
-        if len(df_word_counts) > 0:
-            sns.histplot(df_word_counts['Frequency'], bins=20, kde=True)
-            plt.title('Word Frequency Histogram')
-            plt.xlabel('Frequency')
-            plt.ylabel('Count')
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
-            buf.seek(0)
-            plot_files.append(buf)
-        plt.close()
-    except Exception as e:
-        print(f"Error creating histogram: {e}")
-
-    plt.figure(figsize=(8, 6))
-    try:
-        categories = ['Category A', 'Category B', 'Category C', 'Category D']
-        values = [40, 25, 35, 10]
-        df = pd.DataFrame({'Category': categories, 'Value': values})
-
-        sns.barplot(x='Category', y='Value', data=df)
-        plt.title('Sample Bar Chart')
-        plt.xlabel('Category')
-        plt.ylabel('Value')
-        buf = BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        buf.seek(0)
-        plot_files.append(buf)
-        plt.close()
-    except Exception as e:
-        print(f"Error creating bar chart: {e}")
-    return plot_files
-
-
-def create_pdf(title, sections, plot_files, filename="report.pdf"):
-    doc = SimpleDocTemplate(filename, pagesize=letter)
-    story = []
-
-    story.append(Paragraph(title, title_style))
-    story.append(Spacer(1, 0.5 * inch))
-    story.append(Paragraph("Analysis Report", title_style))
-    story.append(Spacer(1, 1 * inch))
-    story.append(Paragraph("Generated by: Your Name/Your Company", body_style))
-    story.append(PageBreak())
-
-    story.append(Paragraph("Table of Contents", heading1_style))
-    story.append(Spacer(1, 0.25 * inch))
-    for section_title in sections.keys():
-        story.append(Paragraph(section_title, body_style))
-        story.append(Spacer(1, 0.1 * inch))
-    story.append(PageBreak())
-
-    for section_title, section_content in sections.items():
-        story.append(Paragraph(section_title, heading1_style))
-        story.append(Spacer(1, 0.25 * inch))
-
-        paragraphs = section_content.split('\n\n')
-
-        for p in paragraphs:
-            if '<code>' in p and '</code>' in p:
-                code_text = p.replace('<code>', '').replace('</code>', '')
-                story.append(Paragraph(code_text, code_style))
+        # AI summary generate karo
+        with st.spinner("Generating AI summary..."):
+            summary = get_summary(text, GEMINI_API_KEY)
+            if "failed" in summary.lower():
+                st.error("❌ AI Summary failed. Please check your API key or try again.")
             else:
-                wrapped_text = textwrap.fill(p, width=80)
-                story.append(Paragraph(wrapped_text, body_style))
-            story.append(Spacer(1, 0.1 * inch))
-        story.append(Spacer(1, 0.25 * inch))
+                st.markdown("### 🧠 AI Summary")
+                st.write(summary)
 
-    if plot_files:
-        story.append(Paragraph("Plots", heading1_style))
-        story.append(Spacer(1, 0.25 * inch))
-        for plot_file in plot_files:
-            img = PILImage.open(plot_file)
-            img_width, img_height = img.size
-            available_width = letter[0] - 2 * inch
-            available_height = letter[1] - 2 * inch
-            scale = min(available_width / img_width, available_height / img_height, 1)
-            scaled_width = img_width * scale
-            scaled_height = img_height * scale
+        # Graph generate karo
+        generate_graph(data, "graph.png")
 
-            story.append(RLImage(plot_file, width=scaled_width, height=scaled_height))
-            story.append(Spacer(1, 0.25 * inch))
+        # PDF create karo with AI summary included
+        data_with_summary = {"Summary": summary}
+        data_with_summary.update(data)
 
-    doc.build(story)
-    print(f"PDF report generated: {filename}")
-    return filename
+        create_pdf(data_with_summary, "graph.png", output_path="final_report.pdf")
 
-
-def main():
-    st.title("Text File to PDF Report Generator")
-
-    uploaded_file = st.file_uploader("Upload your text file", type="txt")
-
-    if uploaded_file is not None:
-        temp_file_path = "temp.txt"
-        with open(temp_file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        title, sections, full_text = analyze_text(temp_file_path)
-
-        if title and sections:
-            plot_files = create_plots(sections, uploaded_file.name)
-            pdf_filename = create_pdf(title, sections, plot_files, filename=f"{title}_report.pdf")
-
-            st.success(f"PDF report '{pdf_filename}' generated successfully!")
-            with open(pdf_filename, "rb") as f:
-                pdf_data = f.read()
-            st.download_button(
-                label="Download PDF Report",
-                data=pdf_data,
-                file_name=pdf_filename,
-                mime="application/pdf",
-            )
-            os.remove(temp_file_path)
-            os.remove(pdf_filename)
-        else:
-            st.error("Failed to analyze the text file. Please check the file content and format.")
-
-
-if __name__ == "__main__":
-    main()
+        st.success("PDF generated successfully!")
+        with open("final_report.pdf", "rb") as f:
+            st.download_button("Download PDF", f, file_name="Client_Report.pdf")
